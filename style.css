@@ -1618,13 +1618,13 @@ html.dark .food-card:hover { border-color: var(--border); }
   .dark-toggle { display: none; }
   .dark-toggle-mobile {
     display: flex;
-    position: absolute;
-    right: 4px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 32px;
-    height: 32px;
+    position: fixed;
+    right: 12px;
+    top: 12px;
+    width: 36px;
+    height: 36px;
     z-index: 201;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   }
 
   .content {
