@@ -1,0 +1,12 @@
+{
+  "name": "NutriPlan",
+  "short_name": "NutriPlan",
+  "description": "Planejador de refeições semanal inteligente",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f0f2f8",
+  "theme_color": "#5b5fc7",
+  "orientation": "portrait-primary",
+  "categories": ["health", "food"],
+  "lang": "pt-BR"
+}
