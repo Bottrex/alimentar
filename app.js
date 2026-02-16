@@ -189,7 +189,7 @@ const FOODS = [
   // ---- GORDURAS ----
   { id: 'azeite', name: 'Azeite de Oliva', category: 'gordura',
     calories: 884, protein: 0, carbs: 0, fat: 100,
-    rawFactor: 1.0, meals: ['almoco', 'jantar'], unit: 'garrafa' },
+    rawFactor: 1.0, meals: ['almoco', 'jantar'], unit: 'garrafa', liquid: true },
   { id: 'pasta_amendoim', name: 'Pasta de Amendoim', category: 'gordura',
     calories: 589, protein: 25.1, carbs: 20, fat: 50,
     rawFactor: 1.0, meals: ['cafe', 'lanche'], unit: 'pote' },
@@ -207,7 +207,7 @@ const FOODS = [
     rawFactor: 1.0, meals: ['lanche'], unit: 'pacote' },
   { id: 'oleo_coco', name: 'Óleo de Coco', category: 'gordura',
     calories: 862, protein: 0, carbs: 0, fat: 100,
-    rawFactor: 1.0, meals: ['cafe', 'almoco', 'jantar'], unit: 'pote' },
+    rawFactor: 1.0, meals: ['cafe', 'almoco', 'jantar'], unit: 'pote', liquid: true },
 
   // ---- LATICÍNIOS ----
   { id: 'queijo_cottage', name: 'Queijo Cottage', category: 'lacteo',
@@ -224,7 +224,7 @@ const FOODS = [
     rawFactor: 1.0, meals: ['cafe', 'lanche'], unit: 'peça' },
   { id: 'leite_desnatado', name: 'Leite Desnatado', category: 'lacteo',
     calories: 35, protein: 3.4, carbs: 5, fat: 0.1,
-    rawFactor: 1.0, meals: ['cafe', 'lanche'], unit: 'litro' },
+    rawFactor: 1.0, meals: ['cafe', 'lanche'], unit: 'litro', liquid: true },
   { id: 'requeijao_light', name: 'Requeijão Light', category: 'lacteo',
     calories: 150, protein: 7, carbs: 6, fat: 11,
     rawFactor: 1.0, meals: ['cafe', 'lanche'], unit: 'pote' },
@@ -267,6 +267,7 @@ let state = {
 };
 
 let swapTarget = null;
+let addItemTarget = null;
 
 
 // ===== REATIVIDADE =====
@@ -299,7 +300,9 @@ function saveState() {
       darkMode: state.darkMode,
       foodPrices: state.foodPrices
     }));
+    localStorage.setItem('nutriplan_save_ts', Date.now().toString());
   } catch (e) { /* ignorar */ }
+  saveToSupabase();
 }
 
 function loadState() {
@@ -536,6 +539,7 @@ function openCustomFoodModal() {
   document.getElementById('cf-fat').value = '';
   document.getElementById('cf-rawFactor').value = '1.0';
   document.getElementById('cf-unitWeight').value = '0';
+  document.getElementById('cf-liquid').checked = false;
 }
 
 function closeCustomFoodModal() {
@@ -567,6 +571,7 @@ function saveCustomFood() {
   };
   const uw = parseInt(document.getElementById('cf-unitWeight').value) || 0;
   if (uw > 0) food.unitWeight = uw;
+  if (document.getElementById('cf-liquid').checked) food.liquid = true;
 
   state.customFoods.push(food);
   saveState();
@@ -669,14 +674,19 @@ function calcItemsTotals(items) {
            carbs: parseFloat(t.carbs.toFixed(1)), fat: parseFloat(t.fat.toFixed(1)) };
 }
 
-function formatWeight(g) { return g >= 1000 ? (g / 1000).toFixed(2) + ' kg' : g + 'g'; }
+function formatWeight(g, liquid) {
+  if (liquid) return g >= 1000 ? (g / 1000).toFixed(2) + ' L' : g + 'ml';
+  return g >= 1000 ? (g / 1000).toFixed(2) + ' kg' : g + 'g';
+}
 
 function formatGrams(item) {
   if (item.food.category === 'suplemento') return `${item.grams}g (dose)`;
   if (item.food.unitWeight) {
     const units = Math.round(item.grams / item.food.unitWeight);
-    return `${units} un. (${item.grams}g)`;
+    const unit = item.food.liquid ? 'ml' : 'g';
+    return `${units} un. (${item.grams}${unit})`;
   }
+  if (item.food.liquid) return `${item.grams}ml`;
   return `${item.grams}g`;
 }
 
@@ -695,6 +705,7 @@ function generateWeekPlan() {
   state.planGenerated = true;
   state.collapsedDays = {};
   swapTarget = null;
+  addItemTarget = null;
 
   for (const person of state.people) {
     const personPlan = [];
@@ -907,6 +918,34 @@ function getSwapAlternatives(mealKey, currentFoodId, mealItems, itemIdx) {
 }
 
 
+// ===== ADICIONAR ITEM =====
+function startAddItem(personId, dayIdx, mealKey) {
+  addItemTarget = { personId, dayIdx, mealKey };
+  renderPlan();
+}
+
+function cancelAddItem() {
+  addItemTarget = null;
+  renderPlan();
+}
+
+function executeAddItem(foodId) {
+  if (!addItemTarget || !foodId) return;
+  const { personId, dayIdx, mealKey } = addItemTarget;
+  const meal = state.weekPlan[personId][dayIdx].meals[mealKey];
+  const food = getFoodById(foodId);
+  if (!food) return;
+
+  let grams = 100;
+  if (food.unitWeight) grams = food.unitWeight;
+
+  meal.items.push({ food, grams });
+  meal.totals = calcItemsTotals(meal.items);
+  addItemTarget = null;
+  onPlanChanged();
+}
+
+
 // ===== COLAPSAR/EXPANDIR DIAS =====
 function toggleDay(personId, dayIdx) {
   if (!state.collapsedDays[personId]) state.collapsedDays[personId] = {};
@@ -969,6 +1008,7 @@ function renderPlanPersonTabs() {
 function switchPlanPerson(personId) {
   state.activePlanPerson = personId;
   swapTarget = null;
+  addItemTarget = null;
   renderPlanPersonTabs(); renderPlan();
 }
 
@@ -1057,6 +1097,21 @@ function renderPlan() {
           }
         }
 
+        // Add item button/selector
+        const isAdding = addItemTarget && addItemTarget.personId === personId && addItemTarget.dayIdx === dayIdx && addItemTarget.mealKey === mk;
+        if (isAdding) {
+          const addAlts = getSelectedForMeal(mk).filter(f => !meal.items.some(it => it.food.id === f.id));
+          const catOrder = ['proteina','carbo','leguminosa','vegetal','fruta','gordura','lacteo','suplemento'];
+          const grouped = {};
+          for (const f of addAlts) { if (!grouped[f.category]) grouped[f.category] = []; grouped[f.category].push(f); }
+          let addSelectHtml = `<select class="swap-select" onchange="executeAddItem(this.value)"><option value="">-- Escolha o alimento --</option>`;
+          for (const cat of catOrder) { if (!grouped[cat]) continue; addSelectHtml += `<optgroup label="${CATEGORY_NAMES[cat]}">`; for (const f of grouped[cat]) { addSelectHtml += `<option value="${f.id}">${f.name} (${f.calories}kcal/100${f.liquid ? 'ml' : 'g'})</option>`; } addSelectHtml += `</optgroup>`; }
+          addSelectHtml += `</select>`;
+          html += `<div class="meal-item swapping"><div class="swap-row"><span class="swap-old-name">Adicionar alimento</span><button class="item-adj-btn remove" onclick="cancelAddItem()" title="Cancelar">&times;</button></div>${addSelectHtml}</div>`;
+        } else {
+          html += `<button class="btn-add-item" onclick="startAddItem(${personId},${dayIdx},'${mk}')">+ Adicionar item</button>`;
+        }
+
         html += `<div class="meal-totals">
           <div class="meal-total-item"><span class="val">${meal.totals.calories}</span><span class="lbl">kcal</span></div>
           <div class="meal-total-item"><span class="val">${meal.totals.protein}g</span><span class="lbl">prot</span></div>
@@ -1124,7 +1179,7 @@ function renderShoppingList() {
 
     let catTotal = 0;
     for (const item of groups[cat]) {
-      const raw = formatWeight(item.rawGrams);
+      const raw = formatWeight(item.rawGrams, item.food.liquid);
       catTotal += item.rawGrams;
       totalRaw += item.rawGrams;
       let buyCol = raw;
@@ -1252,7 +1307,7 @@ function renderPreparar() {
     html += `<div class="prep-lote"><div class="prep-lote-header"><div class="prep-lote-icon ${method}">${PREP_METHOD_ICONS[method] || '📦'}</div><div><div class="prep-lote-title">${PREP_METHOD_NAMES[method] || method}</div><div class="prep-lote-count">${items.length} ite${items.length === 1 ? 'm' : 'ns'}</div></div></div>`;
     html += `<div class="prep-lote-body">`;
     for (const item of items) {
-      let rawDisplay = formatWeight(item.rawGrams);
+      let rawDisplay = formatWeight(item.rawGrams, item.food.liquid);
       if (item.food.unitWeight) { rawDisplay = `${Math.round(item.rawGrams / item.food.unitWeight)} un. (${rawDisplay})`; }
       html += `<div class="prep-item"><span class="prep-item-name">${item.food.name}</span><span class="prep-item-raw">${rawDisplay}</span></div>`;
     }
@@ -1311,7 +1366,7 @@ function renderResumo() {
   // Charts
   html += '<div class="resumo-charts-row">';
   html += '<div class="resumo-chart-card"><div class="resumo-chart-title">Calorias por Dia</div><canvas id="chart-weekly-cal" width="600" height="260"></canvas></div>';
-  html += '<div class="resumo-chart-card"><div class="resumo-chart-title">Distribuição de Macros</div><canvas id="chart-macro-donut" width="280" height="280"></canvas></div>';
+  html += '<div class="resumo-chart-card"><div class="resumo-chart-title">Distribuição de Macros</div><canvas id="chart-macro-donut" width="320" height="320"></canvas></div>';
   html += '</div>';
 
   container.innerHTML = html;
@@ -1633,9 +1688,147 @@ function renderMontagemConfig() {
 }
 
 
+// ===== SUPABASE SYNC =====
+const SUPABASE_URL = 'https://ubhnqnuoradajiykiiws.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InViaG5xbnVvcmFkYWppeWtpaXdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyNDkzMTYsImV4cCI6MjA4NjgyNTMxNn0.vpbxQa7KmUnA80Fc7Kh9fuoNElXoTS53VNTAF0ueZso';
+let supabaseClient = null;
+let saveDebounceTimer = null;
+
+function initSupabase() {
+  if (typeof supabase !== 'undefined' && SUPABASE_URL && SUPABASE_ANON_KEY) {
+    try {
+      supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (e) { console.error('Supabase init error:', e); }
+  }
+}
+
+function generateSyncCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function getSyncCode() {
+  let code = localStorage.getItem('nutriplan_sync_code');
+  if (!code) {
+    code = generateSyncCode();
+    localStorage.setItem('nutriplan_sync_code', code);
+  }
+  return code;
+}
+
+function getStateForSync() {
+  return {
+    people: state.people,
+    nextPersonId: state.nextPersonId,
+    distribution: state.distribution,
+    selectedFoods: state.selectedFoods,
+    incompatiblePairs: state.incompatiblePairs,
+    customFoods: state.customFoods,
+    savedPlans: state.savedPlans,
+    darkMode: state.darkMode,
+    foodPrices: state.foodPrices,
+    weekPlan: state.weekPlan ? serializePlan(state.weekPlan) : {},
+    planGenerated: state.planGenerated,
+    collapsedDays: state.collapsedDays,
+    activePlanPerson: state.activePlanPerson
+  };
+}
+
+function saveToSupabase() {
+  if (!supabaseClient) return;
+  clearTimeout(saveDebounceTimer);
+  saveDebounceTimer = setTimeout(async () => {
+    try {
+      const code = getSyncCode();
+      const data = getStateForSync();
+      await supabaseClient.from('nutriplan_data').upsert({
+        sync_code: code,
+        state_data: data,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'sync_code' });
+    } catch (e) { console.error('Supabase save error:', e); }
+  }, 2000);
+}
+
+async function loadFromSupabase(code) {
+  if (!supabaseClient) { showMessage('Sincronização não disponível.', 'warn'); return false; }
+  try {
+    const { data, error } = await supabaseClient
+      .from('nutriplan_data')
+      .select('state_data')
+      .eq('sync_code', code.toUpperCase().trim())
+      .single();
+    if (error || !data) { showMessage('Código não encontrado.', 'warn'); return false; }
+
+    const d = data.state_data;
+    if (d.people) { state.people = d.people; state.nextPersonId = d.nextPersonId || (Math.max(...d.people.map(p => p.id)) + 1); }
+    if (d.distribution) state.distribution = d.distribution;
+    if (d.selectedFoods) state.selectedFoods = d.selectedFoods;
+    if (d.incompatiblePairs) state.incompatiblePairs = d.incompatiblePairs;
+    if (d.customFoods) state.customFoods = d.customFoods;
+    if (d.savedPlans) state.savedPlans = d.savedPlans;
+    if (typeof d.darkMode === 'boolean') state.darkMode = d.darkMode;
+    if (d.foodPrices) state.foodPrices = d.foodPrices;
+    if (d.weekPlan && Object.keys(d.weekPlan).length > 0) {
+      state.weekPlan = deserializePlan(d.weekPlan);
+      state.planGenerated = true;
+      state.activePlanPerson = d.activePlanPerson || state.people[0]?.id;
+    }
+    if (d.collapsedDays) state.collapsedDays = d.collapsedDays;
+
+    // Save sync code locally
+    localStorage.setItem('nutriplan_sync_code', code.toUpperCase().trim());
+    saveState();
+    applyDarkMode();
+    renderPeople();
+    renderDistribution();
+    renderFoods();
+    renderIncompatSelects();
+    renderIncompatList();
+    renderMontagemConfig();
+    if (state.planGenerated) {
+      renderPlanPersonTabs();
+      renderPlan();
+      renderShoppingList();
+      document.getElementById('btn-generate').style.display = 'none';
+      document.getElementById('btn-regenerate').style.display = 'inline-flex';
+      document.getElementById('btn-save-plan').style.display = 'inline-flex';
+      document.getElementById('btn-share').style.display = 'inline-flex';
+    }
+    showMessage('Dados sincronizados!', 'ok');
+    return true;
+  } catch (e) { console.error('Supabase load error:', e); showMessage('Erro ao sincronizar.', 'warn'); return false; }
+}
+
+function showSyncModal() {
+  document.getElementById('sync-modal').style.display = 'flex';
+  document.getElementById('sync-my-code').textContent = getSyncCode();
+  document.getElementById('sync-input-code').value = '';
+  updateSyncStatus();
+}
+
+function closeSyncModal() {
+  document.getElementById('sync-modal').style.display = 'none';
+}
+
+async function syncFromCode() {
+  const code = document.getElementById('sync-input-code').value.trim();
+  if (!code || code.length < 6) { showMessage('Digite um código de 6 caracteres.', 'warn'); return; }
+  const ok = await loadFromSupabase(code);
+  if (ok) closeSyncModal();
+}
+
+function updateSyncStatus() {
+  const badge = document.getElementById('sync-code-badge');
+  if (badge) badge.textContent = getSyncCode();
+}
+
 // ===== INIT =====
 function init() {
   loadState();
+  initSupabase();
   applyDarkMode();
   renderPeople();
   renderDistribution();
@@ -1643,6 +1836,7 @@ function init() {
   renderIncompatSelects();
   renderIncompatList();
   renderMontagemConfig();
+  updateSyncStatus();
   document.getElementById('plan-container').innerHTML = '<div class="empty-state"><p>Clique em "Gerar Plano Semanal" para criar seu plano.</p></div>';
 
   // slideDown animation
@@ -1653,6 +1847,21 @@ function init() {
   // Register Service Worker (PWA)
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
+
+  // Try initial load from Supabase
+  if (supabaseClient) {
+    const code = getSyncCode();
+    supabaseClient.from('nutriplan_data').select('state_data, updated_at').eq('sync_code', code).single()
+      .then(({ data }) => {
+        if (data && data.updated_at) {
+          const localTs = parseInt(localStorage.getItem('nutriplan_save_ts') || '0');
+          const remoteTs = new Date(data.updated_at).getTime();
+          if (remoteTs > localTs) {
+            loadFromSupabase(code);
+          }
+        }
+      }).catch(() => {});
   }
 }
 
